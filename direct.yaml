@@ -2,8 +2,12 @@ payload:
   - DOMAIN,threehours-front.cn-zhangjiakou-2.log.aliyuncs.com
   - DOMAIN-SUFFIX,dswang.eu.org
   - DOMAIN-SUFFIX,dsurl.eu.org
-  - DOMAIN-SUFFIX,dsdog.ru
+  - DOMAIN-SUFFIX,cfdns.ip-ddns.com
   - DOMAIN-SUFFIX,dsdog.tk
+  - DOMAIN-SUFFIX,dsdog.us.kg
+  - DOMAIN-SUFFIX,dswang.us.kg
+  - DOMAIN-SUFFIX,dsw.ddns-ip.net
+  - DOMAIN-SUFFIX,saas-cdn.us.kg
   - DOMAIN,international-gfe.download.nvidia.com
   - DOMAIN,openwrt.ai
   - DOMAIN-KEYWORD,test-ipv6
