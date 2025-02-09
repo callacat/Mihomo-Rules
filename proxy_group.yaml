@@ -1,0 +1,25 @@
+payload:
+  - DOMAIN,services.googleapis.cn
+  - DOMAIN,sysupgrade.kyarucloud.moe
+  - DOMAIN-SUFFIX,recaptcha.net
+  - DOMAIN,cdn.staticfile.org
+  - DOMAIN-SUFFIX,bulianglin.com
+  - DOMAIN-SUFFIX,nodeseek.com
+  - DOMAIN-SUFFIX,huggingface.co
+  - DOMAIN-SUFFIX,openfpcdn.io
+  - DOMAIN-SUFFIX,v2ex.com
+  - DOMAIN-SUFFIX,xsw.tw
+  - DOMAIN-SUFFIX,netlify.com
+  - DOMAIN-SUFFIX,immortalwrt.org
+  - DOMAIN-SUFFIX,kyarucloud.moe
+  - DOMAIN-SUFFIX,metacubex.one
+  - DOMAIN-SUFFIX,lmarena.ai
+  - DOMAIN,api.nopecha.com
+  - DOMAIN-SUFFIX,devv.ai
+  - DOMAIN-SUFFIX,lmsys.org
+  - DOMAIN-SUFFIX,ai-pro.org
+  - DOMAIN-SUFFIX,cloudflare.com
+  - DOMAIN,global.cdn.jihujiasuqi.com
+  - DOMAIN,server.codeium.com
+  - DOMAIN,download.zerotier.com
+  - DOMAIN,gofile.io
