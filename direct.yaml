@@ -1,0 +1,26 @@
+payload:
+  # 公益3小时
+  - DOMAIN,threehours-front.cn-zhangjiakou-2.log.aliyuncs.com
+  - DOMAIN-SUFFIX,dswang.eu.org
+  - DOMAIN-SUFFIX,dsurl.eu.org
+  - DOMAIN-SUFFIX,dsdog.ru
+  - DOMAIN-SUFFIX,dsdog.tk
+  - DOMAIN,international-gfe.download.nvidia.com
+  - DOMAIN,openwrt.ai
+  - DOMAIN-KEYWORD,test-ipv6
+  - DOMAIN-SUFFIX,story51.com
+  - DOMAIN,time.windows.com
+  - DOMAIN-SUFFIX,api.letsencrypt.org
+  - DOMAIN-SUFFIX,generationnexxxt.com
+  - DOMAIN,sign.lagrangecore.org
+  - DOMAIN,download.jetbrains.com
+  - DOMAIN,download-cdn.jetbrains.com
+  - DOMAIN-SUFFIX,gofile.io
+  - DOMAIN,wgo.mmstat.com
+  - IP-CIDR,183.206.0.0/15
+  - IP-CIDR,223.5.5.5/32
+  - IP-CIDR,27.36.0.0/14
+  - IP-CIDR,183.238.66.0/24
+  - IP-CIDR,140.207.198.6/32
+  - IP-CIDR,185.222.222.222/32
+  - IP-CIDR,94.140.14.14/32
