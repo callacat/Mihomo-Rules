@@ -1,5 +1,4 @@
 payload:
-  # 公益3小时
   - DOMAIN,threehours-front.cn-zhangjiakou-2.log.aliyuncs.com
   - DOMAIN-SUFFIX,dswang.eu.org
   - DOMAIN-SUFFIX,dsurl.eu.org
