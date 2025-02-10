@@ -24,3 +24,4 @@ payload:
   - DOMAIN,download.zerotier.com
   - DOMAIN,gofile.io
   - DOMAIN,oraclecloud.com
+  - DOMAIN,aistudio.google.com
