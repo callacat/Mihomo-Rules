@@ -28,3 +28,4 @@ payload:
   - DOMAIN,aistudio.google.com
   - DOMAIN-SUFFIX,gstatic.com
   - DOMAIN-SUFFIX,qiuquan.cc
+  - DOMAIN-SUFFIX,qiuquan.org
