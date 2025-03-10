@@ -27,3 +27,4 @@ payload:
   - DOMAIN,oraclecloud.com
   - DOMAIN,aistudio.google.com
   - DOMAIN-SUFFIX,gstatic.com
+  - DOMAIN-SUFFIX,qiuquan.cc
