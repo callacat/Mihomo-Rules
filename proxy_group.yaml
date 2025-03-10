@@ -1,5 +1,6 @@
 payload:
   - DOMAIN,services.googleapis.cn
+  - DOMAIN,update.googleapis.com
   - DOMAIN,sysupgrade.kyarucloud.moe
   - DOMAIN-SUFFIX,recaptcha.net
   - DOMAIN,cdn.staticfile.org
