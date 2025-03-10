@@ -25,3 +25,4 @@ payload:
   - DOMAIN,gofile.io
   - DOMAIN,oraclecloud.com
   - DOMAIN,aistudio.google.com
+  - DOMAIN,gstatic.com
