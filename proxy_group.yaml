@@ -1,8 +1,4 @@
 payload:
-  - DOMAIN,services.googleapis.cn
-  - DOMAIN,update.googleapis.com
-  - DOMAIN,fonts.googleapis.com
-  - DOMAIN,sysupgrade.kyarucloud.moe
   - DOMAIN-SUFFIX,recaptcha.net
   - DOMAIN,cdn.staticfile.org
   - DOMAIN-SUFFIX,bulianglin.com
@@ -26,10 +22,9 @@ payload:
   - DOMAIN,download.zerotier.com
   - DOMAIN,gofile.io
   - DOMAIN,oraclecloud.com
-  - DOMAIN,aistudio.google.com
   - DOMAIN-SUFFIX,gstatic.com
   - DOMAIN-SUFFIX,qiuquan.cc
   - DOMAIN-SUFFIX,qiuquan.org
   - DOMAIN,www.kelongwo.cn
-  - DOMAIN,translate.google.cn
   - DOMAIN-SUFFIX,appflowy.com
+  - DOMAIN-KEYWORD,byrut
