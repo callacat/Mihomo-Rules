@@ -17,3 +17,4 @@ payload:
   - DOMAIN,download-cdn.jetbrains.com
   - DOMAIN-SUFFIX,gofile.io
   - DOMAIN,wgo.mmstat.com
+  - DOMAIN-SUFFIX,pool.ntp.org
