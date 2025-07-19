@@ -18,3 +18,4 @@ payload:
   - DOMAIN-SUFFIX,gofile.io
   - DOMAIN,wgo.mmstat.com
   - DOMAIN-SUFFIX,pool.ntp.org
+  - DOMAIN,workers.ddns-ip.net
