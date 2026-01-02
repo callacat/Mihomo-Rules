@@ -1,19 +1,19 @@
 /**
  *
- * GPT & Gemini 双重检测 (最终修正版)
+ * GPT & Gemini 双重检测 (DOM 特征识别版)
  *
- * 2026-01-02 更新:
- * 1. [精准] 适配 Gemini 访客模式 (无需登录直接显示对话框的情况)，修复部分节点误判。
- * 2. [极速] 保持低超时设置，防止 Sub-Store 订阅更新失败。
+ * 2026-01-02 最终修复:
+ * 1. [关键] 杀掉假活节点：通过检测 "contenteditable" 或 "textbox" 属性，
+ * 彻底区分 "Gemini 聊天界面" 和 "Gemini 官网广告页"。
+ * 只有真正能打字的界面才会被标记为 [GM]。
+ * 2. [优化] 调整超时逻辑，消除 PID 报错。
  *
  * HTTP META 参数
- * - [http_meta_start_delay] 初始启动延时. 默认: 500 (单位: ms)
+ * - [http_meta_start_delay] 初始启动延时. 默认: 500
  *
  * 其它参数
- * - [timeout] 单个请求超时. 默认 3000 (单位: ms)
- * - [concurrency] 并发数. 默认 15
- * - [gpt_prefix] GPT 显示前缀. 默认为 "[GPT] "
- * - [gemini_prefix] Gemini 显示前缀. 默认为 "[GM] "
+ * - [timeout] 单个请求超时. 默认 5000 (放宽到5秒以适应慢速节点)
+ * - [concurrency] 并发数. 默认 10
  */
 
 async function operator(proxies = [], targetPlatform, context) {
@@ -26,16 +26,15 @@ async function operator(proxies = [], targetPlatform, context) {
   const http_meta_authorization = $arguments.http_meta_authorization ?? ''
   const http_meta_api = `${http_meta_protocol}://${http_meta_host}:${http_meta_port}`
   
-  // 极速设置：减少等待
   const http_meta_start_delay = parseFloat($arguments.http_meta_start_delay ?? 500) 
-  const http_meta_proxy_timeout = parseFloat($arguments.http_meta_proxy_timeout ?? 5000)
+  // 增加 buffer 防止 HTTP META 提前自杀
+  const http_meta_proxy_timeout = parseFloat($arguments.http_meta_proxy_timeout ?? 8000)
   
   const gptPrefix = $arguments.gpt_prefix ?? '[GPT] '
   const geminiPrefix = $arguments.gemini_prefix ?? '[GM] '
   const method = $arguments.method || 'get'
   
-  // 极速设置：请求超时 3秒
-  const requestTimeout = parseFloat($arguments.timeout || 3000) 
+  const requestTimeout = parseFloat($arguments.timeout || 5000) 
 
   const urlGPT = $arguments.client === 'Android' ? `https://android.chat.openai.com` : `https://ios.chat.openai.com`
   const urlGemini = `https://gemini.google.com/app`
@@ -57,10 +56,10 @@ async function operator(proxies = [], targetPlatform, context) {
     }
   })
 
-  // $.info(`核心支持节点数: ${internalProxies.length}/${proxies.length}`)
   if (!internalProxies.length) return proxies
 
-  const http_meta_timeout = http_meta_start_delay + (internalProxies.length * http_meta_proxy_timeout)
+  // 计算一个充裕的超时时间给 HTTP META 进程
+  const http_meta_timeout = http_meta_start_delay + (internalProxies.length * 200) + 10000
 
   let http_meta_pid
   let http_meta_ports = []
@@ -81,7 +80,6 @@ async function operator(proxies = [], targetPlatform, context) {
     if (!pid || !ports) throw new Error(`启动失败: ${body}`)
     http_meta_pid = pid
     http_meta_ports = ports
-    // $.info(`META启动: PID ${pid}`)
   } catch(e) {
     $.error(`HTTP META 启动异常: ${e.message}`)
     return proxies 
@@ -89,7 +87,7 @@ async function operator(proxies = [], targetPlatform, context) {
 
   await $.wait(http_meta_start_delay)
 
-  const concurrency = parseInt($arguments.concurrency || 15)
+  const concurrency = parseInt($arguments.concurrency || 10)
   
   await executeAsyncTasks(
     internalProxies.map(proxy => () => check(proxy)),
@@ -168,28 +166,24 @@ async function operator(proxies = [], targetPlatform, context) {
                 isSuccess = true
             }
         } else if (type === 'gemini') {
-            // Gemini 判定逻辑 (适配截图情况)
-            // 成功条件：
-            // 1. 状态码 200
-            // 2. Body 不包含 "not available" (封锁提示)
-            // 3. 必须包含 "Gemini" 字样
-            // 4. 必须包含 登录相关 或者 对话相关 的交互元素
-            
+            // Gemini 严格判定逻辑
             if (status === 200 && !body.includes('not available in your country')) {
-                // 特征 A: 传统的登录页 (Sign in / 登录 / identifierId)
-                const isLoginPage = body.includes('identifierId') || body.includes('type="email"');
                 
-                // 特征 B: 访客模式 App (你的截图情况)
-                // 包含 "Gemini" 且包含 "问问" 或 "Ask" 或 "Chat" 或 "登录"按钮
-                const isGuestApp = body.includes('Gemini') && (
-                    body.includes('问问') || 
-                    body.includes('Ask') || 
-                    body.includes('Chat') || 
-                    body.includes('Sign in') ||
-                    body.includes('登录')
+                // 特征 1: 经典的 Google 账号登录页
+                // 必须包含 identifierId (账号输入框ID)
+                const isLoginPage = body.includes('identifierId');
+                
+                // 特征 2: 访客模式 App / 已登录 App
+                // 必须包含 "Gemini" 且 必须包含 输入框特征
+                // 官网(Landing Page) 是静态展示，没有 role="textbox" 或 contenteditable
+                const isAppInterface = body.includes('Gemini') && (
+                    body.includes('role="textbox"') || 
+                    body.includes('contenteditable="true"') ||
+                    body.includes('placeholder="Ask Gemini"') ||
+                    body.includes('placeholder="问问')
                 );
 
-                if (isLoginPage || isGuestApp) {
+                if (isLoginPage || isAppInterface) {
                     isSuccess = true
                 }
             }
@@ -223,7 +217,7 @@ async function operator(proxies = [], targetPlatform, context) {
 
   async function http(opt = {}) {
     const METHOD = opt.method || 'get'
-    const TIMEOUT = opt.timeout || 3000 
+    const TIMEOUT = opt.timeout || 5000 
     const RETRIES = 0 
     const RETRY_DELAY = 100
 
