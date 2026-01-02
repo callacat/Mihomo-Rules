@@ -1,19 +1,18 @@
 /**
  *
- * GPT & Gemini 双重检测 (DOM 特征识别版)
+ * GPT & Gemini 双重检测 (源码特征分析版)
  *
- * 2026-01-02 最终修复:
- * 1. [关键] 杀掉假活节点：通过检测 "contenteditable" 或 "textbox" 属性，
- * 彻底区分 "Gemini 聊天界面" 和 "Gemini 官网广告页"。
- * 只有真正能打字的界面才会被标记为 [GM]。
- * 2. [优化] 调整超时逻辑，消除 PID 报错。
+ * 更新日志:
+ * v4.0: 针对 Gemini 动态网页特性，改为检测 "WIZ_global_data" (Google Web App 特征) 
+ * 并排除 "glue-header" (营销页特征)，解决跳官网误判和访客模式漏判问题。
  *
  * HTTP META 参数
  * - [http_meta_start_delay] 初始启动延时. 默认: 500
+ * - [timeout] 单个请求超时. 默认 5000
  *
  * 其它参数
- * - [timeout] 单个请求超时. 默认 5000 (放宽到5秒以适应慢速节点)
- * - [concurrency] 并发数. 默认 10
+ * - [gpt_prefix] GPT 显示前缀. 默认为 "[GPT] "
+ * - [gemini_prefix] Gemini 显示前缀. 默认为 "[GM] "
  */
 
 async function operator(proxies = [], targetPlatform, context) {
@@ -27,7 +26,6 @@ async function operator(proxies = [], targetPlatform, context) {
   const http_meta_api = `${http_meta_protocol}://${http_meta_host}:${http_meta_port}`
   
   const http_meta_start_delay = parseFloat($arguments.http_meta_start_delay ?? 500) 
-  // 增加 buffer 防止 HTTP META 提前自杀
   const http_meta_proxy_timeout = parseFloat($arguments.http_meta_proxy_timeout ?? 8000)
   
   const gptPrefix = $arguments.gpt_prefix ?? '[GPT] '
@@ -37,6 +35,7 @@ async function operator(proxies = [], targetPlatform, context) {
   const requestTimeout = parseFloat($arguments.timeout || 5000) 
 
   const urlGPT = $arguments.client === 'Android' ? `https://android.chat.openai.com` : `https://ios.chat.openai.com`
+  // 必须检测 /app 路径
   const urlGemini = `https://gemini.google.com/app`
 
   const $ = $substore
@@ -58,13 +57,10 @@ async function operator(proxies = [], targetPlatform, context) {
 
   if (!internalProxies.length) return proxies
 
-  // 计算一个充裕的超时时间给 HTTP META 进程
   const http_meta_timeout = http_meta_start_delay + (internalProxies.length * 200) + 10000
-
   let http_meta_pid
   let http_meta_ports = []
   
-  // 启动 HTTP META
   try {
     const res = await http({
       retries: 0,
@@ -94,7 +90,6 @@ async function operator(proxies = [], targetPlatform, context) {
     { concurrency }
   )
 
-  // 关闭 HTTP META
   try {
     await http({
       method: 'post',
@@ -166,25 +161,36 @@ async function operator(proxies = [], targetPlatform, context) {
                 isSuccess = true
             }
         } else if (type === 'gemini') {
-            // Gemini 严格判定逻辑
-            if (status === 200 && !body.includes('not available in your country')) {
-                
-                // 特征 1: 经典的 Google 账号登录页
-                // 必须包含 identifierId (账号输入框ID)
-                const isLoginPage = body.includes('identifierId');
-                
-                // 特征 2: 访客模式 App / 已登录 App
-                // 必须包含 "Gemini" 且 必须包含 输入框特征
-                // 官网(Landing Page) 是静态展示，没有 role="textbox" 或 contenteditable
-                const isAppInterface = body.includes('Gemini') && (
-                    body.includes('role="textbox"') || 
-                    body.includes('contenteditable="true"') ||
-                    body.includes('placeholder="Ask Gemini"') ||
-                    body.includes('placeholder="问问')
-                );
+            
+            // 调试日志：提取页面标题 (只在 200 时提取)
+            let pageTitle = "Unknown";
+            const titleMatch = body.match(/<title>(.*?)<\/title>/);
+            if (titleMatch) pageTitle = titleMatch[1];
 
-                if (isLoginPage || isAppInterface) {
-                    isSuccess = true
+            // 1. 登录页 (最强特征)
+            // 跳转到了 accounts.google.com，body 里一定有 identifierId (账号输入框ID)
+            const isLoginPage = body.includes('identifierId') || body.includes('type="email"');
+
+            // 2. Google Web App (App / 访客模式特征)
+            // 只要是 Google 的 Web App (Docs, Gemini, Drive)，源码里通常会有 "WIZ_global_data"
+            // 或者 "CF_initDataCallback" 等初始化数据。
+            // 营销页通常是纯静态 HTML，没有这些。
+            const isWebApp = body.includes('WIZ_global_data') || body.includes('AF_initDataCallback');
+            
+            // 3. 营销页/官网 (负面特征)
+            // 官网通常包含 "glue-header" (Google Marketing Header)
+            // 或者标题是 "Google Gemini" (App 标题通常只有 "Gemini")
+            const isMarketingPage = body.includes('glue-header') || pageTitle.includes('Google Gemini');
+
+            if (status === 200) {
+                if (isLoginPage) {
+                    isSuccess = true;
+                    // $.info(`[${proxy.name}] Gemini: 登录页通过`);
+                } else if (isWebApp && !isMarketingPage) {
+                    isSuccess = true;
+                    // $.info(`[${proxy.name}] Gemini: APP/访客模式通过 (Title: ${pageTitle})`);
+                } else {
+                    // $.info(`[${proxy.name}] Gemini: 失败 (Title: ${pageTitle}, IsMarketing: ${isMarketingPage})`);
                 }
             }
         }
