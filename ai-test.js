@@ -1,18 +1,20 @@
 /**
  *
- * GPT & Gemini 双重检测 (源码特征分析版)
+ * GPT & Gemini 双重检测 (核心数据签名版)
  *
- * 更新日志:
- * v4.0: 针对 Gemini 动态网页特性，改为检测 "WIZ_global_data" (Google Web App 特征) 
- * 并排除 "glue-header" (营销页特征)，解决跳官网误判和访客模式漏判问题。
+ * 版本: v5.0 (Final)
+ * * 核心原理:
+ * 不再检测 UI 元素 (因为是动态渲染的)，而是检测 Google Wiz 框架的核心数据签名。
+ * * 1. [SNlM0e] 或 [WIZ_global_data]: 只有真正的 Gemini 应用(含访客模式)才会加载这些初始化数据。
+ * 2. [glue-header]: 只有营销/介绍页面才会有这个组件。
+ *
+ * 此逻辑可完美区分:
+ * - 访客模式/已登录 (通过, 包含 WIZ_global_data)
+ * - 地区不支持/跳营销页 (失败, 包含 glue-header 或 缺核心数据)
  *
  * HTTP META 参数
  * - [http_meta_start_delay] 初始启动延时. 默认: 500
  * - [timeout] 单个请求超时. 默认 5000
- *
- * 其它参数
- * - [gpt_prefix] GPT 显示前缀. 默认为 "[GPT] "
- * - [gemini_prefix] Gemini 显示前缀. 默认为 "[GM] "
  */
 
 async function operator(proxies = [], targetPlatform, context) {
@@ -35,7 +37,7 @@ async function operator(proxies = [], targetPlatform, context) {
   const requestTimeout = parseFloat($arguments.timeout || 5000) 
 
   const urlGPT = $arguments.client === 'Android' ? `https://android.chat.openai.com` : `https://ios.chat.openai.com`
-  // 必须检测 /app 路径
+  // 必须检测 /app 路径，这是应用入口
   const urlGemini = `https://gemini.google.com/app`
 
   const $ = $substore
@@ -161,36 +163,20 @@ async function operator(proxies = [], targetPlatform, context) {
                 isSuccess = true
             }
         } else if (type === 'gemini') {
-            
-            // 调试日志：提取页面标题 (只在 200 时提取)
-            let pageTitle = "Unknown";
-            const titleMatch = body.match(/<title>(.*?)<\/title>/);
-            if (titleMatch) pageTitle = titleMatch[1];
-
-            // 1. 登录页 (最强特征)
-            // 跳转到了 accounts.google.com，body 里一定有 identifierId (账号输入框ID)
-            const isLoginPage = body.includes('identifierId') || body.includes('type="email"');
-
-            // 2. Google Web App (App / 访客模式特征)
-            // 只要是 Google 的 Web App (Docs, Gemini, Drive)，源码里通常会有 "WIZ_global_data"
-            // 或者 "CF_initDataCallback" 等初始化数据。
-            // 营销页通常是纯静态 HTML，没有这些。
-            const isWebApp = body.includes('WIZ_global_data') || body.includes('AF_initDataCallback');
-            
-            // 3. 营销页/官网 (负面特征)
-            // 官网通常包含 "glue-header" (Google Marketing Header)
-            // 或者标题是 "Google Gemini" (App 标题通常只有 "Gemini")
-            const isMarketingPage = body.includes('glue-header') || pageTitle.includes('Google Gemini');
-
             if (status === 200) {
-                if (isLoginPage) {
+                // 1. 登录跳转检测 (最强特征，直接过)
+                if (body.includes('identifierId') || body.includes('type="email"')) {
                     isSuccess = true;
-                    // $.info(`[${proxy.name}] Gemini: 登录页通过`);
-                } else if (isWebApp && !isMarketingPage) {
-                    isSuccess = true;
-                    // $.info(`[${proxy.name}] Gemini: APP/访客模式通过 (Title: ${pageTitle})`);
-                } else {
-                    // $.info(`[${proxy.name}] Gemini: 失败 (Title: ${pageTitle}, IsMarketing: ${isMarketingPage})`);
+                } 
+                // 2. 应用数据检测 (针对访客模式/SPA应用)
+                // WIZ_global_data: Google Wiz App 核心数据对象
+                // SNlM0e: Gemini 特有的后端数据 ID
+                else if (body.includes('WIZ_global_data') || body.includes('SNlM0e')) {
+                    // 3. 排除营销页 (双重保险)
+                    // 营销页通常包含 "glue-header" 或其他静态页特征
+                    if (!body.includes('glue-header')) {
+                        isSuccess = true;
+                    }
                 }
             }
         }
