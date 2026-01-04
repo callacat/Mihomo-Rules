@@ -1,26 +1,48 @@
 /**
- * Gemini 检测脚本 (Sub-Store 兼容版)
- * 依赖: 必须在环境中有运行 http-meta 服务 (监听 127.0.0.1:9876)
+ * Gemini 批量检测脚本 (高性能参数化版)
+ * * 使用方法:
+ * 在 Sub-Store 脚本操作的 "Argument" 栏填入参数，格式如下 (URL Query 格式):
+ * api_key=你的Key&concurrency=20&timeout=3000&prefix=[GM] 
  */
+
 async function operator(proxies = [], targetPlatform, context) {
-  const USER_API_KEY = $arguments.api_key || ''; 
-  const GM_PREFIX = $arguments.prefix ?? '[GM] ';
+  // --- 1. 参数获取 (优先读取 Arguments，无参数则使用默认值) ---
+  const args = $arguments || {};
   
-  // --- 关键设置 ---
-  // 如果你的 http-meta 在另一个 Docker 容器，这里不能填 127.0.0.1，要填容器名或宿主IP
-  const http_meta_host = $arguments.http_meta_host ?? '127.0.0.1'; 
-  const http_meta_port = $arguments.http_meta_port ?? 9876;
+  // [必填] Google API Key
+  const USER_API_KEY = args.api_key || ''; 
   
+  // [选填] 节点前缀 (默认 "[GM] ")
+  const GM_PREFIX = args.prefix || '[GM] ';
+  
+  // [选填] 并发数 (默认 20，建议 10-50，太高可能会被 Google 429 限流)
+  const CONCURRENCY = parseInt(args.concurrency || 20);
+  
+  // [选填] 超时时间 (毫秒，默认 3000ms，越短速度越快但可能误杀高延迟节点)
+  const TIMEOUT = parseInt(args.timeout || 3000);
+
+  // [选填] HTTP Meta 地址 (通常不用改)
+  const META_HOST = args.meta_host || '127.0.0.1';
+  const META_PORT = parseInt(args.meta_port || 9876);
+
+  // 安全检查
+  if (!USER_API_KEY) {
+    $substore.error("❌ 错误: 未填写 api_key。请在 Sub-Store 参数栏填写 api_key=xxx");
+    return proxies;
+  }
+
   const $ = $substore;
   const targetUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${USER_API_KEY}`;
   const internalProxies = [];
 
-  // 1. 转换节点
-  proxies.map((proxy, index) => {
+  // --- 2. 预处理：筛选并转换节点 ---
+  proxies.forEach((proxy, index) => {
+    // 简单过滤：只检测没有 [GM] 前缀的？(这里暂时全测，依靠逻辑去重)
     try {
+      // 转换为 Meta 核心可识别的格式
       const node = ProxyUtils.produce([{ ...proxy }], 'ClashMeta', 'internal')?.[0];
       if (node) {
-        // 过滤掉特殊字段，保留核心配置
+        // 保留 Sub-Store 内部字段
         for (const key in proxy) {
             if (/^_/i.test(key)) node[key] = proxy[key];
         }
@@ -29,102 +51,112 @@ async function operator(proxies = [], targetPlatform, context) {
     } catch (e) {}
   });
 
-  if (!internalProxies.length) return proxies;
+  if (internalProxies.length === 0) return proxies;
 
-  // 2. 启动 HTTP META (必须先成功这一步)
-  const http_meta_api = `http://${http_meta_host}:${http_meta_port}`;
-  let http_meta_pid;
-  let http_meta_ports = [];
+  // --- 3. 启动 HTTP Meta 服务 ---
+  const metaApiBase = `http://${META_HOST}:${META_PORT}`;
+  let metaPid, metaPorts;
 
   try {
-      // 修复：使用小写 post
-      const res = await http({
-        method: 'post', 
-        url: `${http_meta_api}/start`,
+    const startRes = await http({
+        method: 'post',
+        url: `${metaApiBase}/start`,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ proxies: internalProxies, timeout: 20000 }),
-      });
-      
-      const body = JSON.parse(res.body);
-      if (!body.pid) throw new Error("无 PID 返回");
-      
-      http_meta_pid = body.pid;
-      http_meta_ports = body.ports;
-      $.info(`Meta 启动成功 PID: ${http_meta_pid}`);
-      await $.wait(3000); // 等待服务就绪
-  } catch(e) {
-      $.error(`❌ 无法连接 HTTP Meta 服务: ${e.message}`);
-      $.error(`请检查 Docker 是否安装了 http-meta，并且端口 ${http_meta_port} 是否可达`);
-      return proxies; // 脚本终止，返回原节点
+        body: JSON.stringify({ 
+            proxies: internalProxies, 
+            timeout: TIMEOUT + 5000 // 核心存活时间要略长于检测超时
+        })
+    });
+    
+    const body = JSON.parse(startRes.body);
+    metaPid = body.pid;
+    metaPorts = body.ports;
+    $.info(`🚀 Meta 启动 (PID: ${metaPid}) | 并发: ${CONCURRENCY} | 超时: ${TIMEOUT}ms`);
+    
+    // 必须等待核心端口监听就绪，2秒通常足够
+    await $.wait(2000); 
+
+  } catch (e) {
+    $.error(`❌ HTTP Meta 启动失败: ${e.message}`);
+    return proxies;
   }
 
-  // 3. 执行检测
-  // 限制并发为 5，避免把 API 冲爆
-  const concurrency = 5; 
+  // --- 4. 执行并发检测 ---
+  const total = internalProxies.length;
+  let finished = 0;
+  let validCount = 0;
+
+  // 使用 Promise 队列控制并发
   await executeAsyncTasks(
-    internalProxies.map(proxy => () => check(proxy)),
-    { concurrency }
+    internalProxies.map((proxy, idx) => async () => {
+        const isOk = await checkNode(proxy, metaPorts[idx]);
+        finished++;
+        if (finished % 10 === 0 || finished === total) {
+            $.info(`进度: ${finished}/${total} (可用: ${validCount})`);
+        }
+    }),
+    { concurrency: CONCURRENCY }
   );
 
-  // 4. 关闭服务
+  // --- 5. 关闭服务 ---
   try {
     await http({
-      method: 'post',
-      url: `${http_meta_api}/stop`,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pid: [http_meta_pid] }),
+        method: 'post',
+        url: `${metaApiBase}/stop`,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pid: [metaPid] })
     });
+    $.info(`🏁 检测完成，Meta 已关闭`);
   } catch (e) {}
 
   return proxies;
 
-  // --- 核心检测逻辑 ---
-  async function check(proxy) {
+  // ================= 核心逻辑函数 =================
+
+  async function checkNode(proxy, port) {
     try {
-      const index = internalProxies.indexOf(proxy);
-      // 修复：$.http 通常不支持 proxy 参数，这里通过直接访问 Meta 映射的端口来实现代理
-      // 访问 http://127.0.0.1:PORT/url 这种形式 (HTTP 代理特性)
-      // 或者配置 $.http 的 agent。但最通用的方法是直接把请求发给代理端口。
-      
-      const proxyPort = http_meta_ports[index];
-      // 注意：这里需要 Sub-Store 环境支持通过代理发起请求
-      // 如果 $.http 不支持 proxy 选项，这个脚本在 Sub-Store Node 版是跑不通的
-      
+      // 通过本地 Meta 端口发起请求
       const res = await http({
         method: 'get',
         url: targetUrl,
-        timeout: 5000,
-        // 尝试传递代理参数 (取决于 Sub-Store 具体实现)
-        proxy: `http://${http_meta_host}:${proxyPort}` 
+        timeout: TIMEOUT,
+        // 这里依赖 Sub-Store 环境能否正确处理 proxy 参数
+        // 如果不能，通常通过 http://127.0.0.1:port/url 方式也不太行(HTTPS证书问题)
+        // 所以我们假设 $.http 支持 proxy 选项
+        proxy: `http://${META_HOST}:${port}`
       });
 
       const status = parseInt(res.status || res.statusCode || 0);
+      
+      // 200 = 成功返回模型列表
       if (status === 200) {
-        $.info(`[${proxy.name}] ✅ 可用`);
-        if (!proxies[proxy._proxies_index].name.startsWith(GM_PREFIX)) {
-             proxies[proxy._proxies_index].name = `${GM_PREFIX}${proxies[proxy._proxies_index].name}`;
+        validCount++;
+        const originalProxy = proxies[proxy._proxies_index];
+        // 避免重复加前缀
+        if (!originalProxy.name.includes(GM_PREFIX)) {
+            originalProxy.name = `${GM_PREFIX}${originalProxy.name}`;
         }
-      } else {
-        $.info(`[${proxy.name}] ❌ 不可用 (${status})`);
+        return true;
       }
     } catch (e) {
-        // 忽略网络错误
+      // 超时或网络错误，视为不可用，不打印日志以免刷屏
     }
+    return false;
   }
 
-  // 修复：封装 $.http 避免方法不存在报错
+  // 兼容性 HTTP 封装
   async function http(opt = {}) {
-    const method = (opt.method || 'get').toLowerCase(); // 强制小写
-    // Sub-Store 的 $.http.get/post 签名通常是 (opts) => Promise
-    if (typeof $.http[method] === 'function') {
-        return await $.http[method](opt);
+    const method = (opt.method || 'get').toLowerCase();
+    if (typeof $substore.http[method] === 'function') {
+        return await $substore.http[method](opt);
     } else {
-        throw new Error(`$.http.${method} 不是一个函数`);
+        throw new Error(`Env Error: $.http.${method} not found`);
     }
   }
 
+  // 并发控制器
   function executeAsyncTasks(tasks, { concurrency = 1 } = {}) {
-    return new Promise(async (resolve) => {
+    return new Promise((resolve) => {
       let index = 0;
       let running = 0;
       function next() {
