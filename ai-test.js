@@ -3,7 +3,7 @@
  * 依赖: 必须在环境中有运行 http-meta 服务 (监听 127.0.0.1:9876)
  */
 async function operator(proxies = [], targetPlatform, context) {
-  const USER_API_KEY = $arguments.api_key || 'AIzaSyDc7sCw2X6wC6dUxzdeKrWxG9TLfr7mGkg'; 
+  const USER_API_KEY = $arguments.api_key || ''; 
   const GM_PREFIX = $arguments.prefix ?? '[GM] ';
   
   // --- 关键设置 ---
