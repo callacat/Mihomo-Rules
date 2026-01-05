@@ -19,3 +19,4 @@ payload:
   - DOMAIN,wgo.mmstat.com
   - DOMAIN-SUFFIX,pool.ntp.org
   - DOMAIN-SUFFIX,workers.ddns-ip.net
+  - DOMAIN-SUFFIX,gh-proxy.com
