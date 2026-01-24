@@ -22,3 +22,7 @@ payload:
   - DOMAIN-SUFFIX,gh-proxy.com
   - DOMAIN-SUFFIX,gh-proxy.org
   - DOMAIN-SUFFIX,cloudflare-ech.com
+  - DOMAIN,api.hotaruapi.top
+  - DOMAIN,x666.me
+  - DOMAIN,kfc-api.sxxe.net
+  - DOMAIN,api.voct.top
