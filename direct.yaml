@@ -5,6 +5,11 @@ payload:
   - DOMAIN-SUFFIX,cfdns.ip-ddns.com
   - DOMAIN-SUFFIX,dsdog.tk
   - DOMAIN-SUFFIX,dsw.ddns-ip.net
+  - DOMAIN-SUFFIX,ds1.indevs.in
+  - DOMAIN-SUFFIX,dsdog.eu.cc
+  - DOMAIN-SUFFIX,dswang.eu.cc
+  - DOMAIN-SUFFIX,dswang.indevs.in
+  - DOMAIN-SUFFIX,ipyx.eu.cc
   - DOMAIN,international-gfe.download.nvidia.com
   - DOMAIN,openwrt.ai
   - DOMAIN-KEYWORD,test-ipv6
