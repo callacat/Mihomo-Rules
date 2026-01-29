@@ -23,7 +23,7 @@ async function operator(proxies = [], targetPlatform, context) {
   // 检测目标：Linux.do
   // 策略：只要能连接到 Linux.do 的服务器（哪怕被 CF 拦截），就视为节点可用。
   // 因为脚本无法通过 CF 的人机验证，但浏览器可以。
-  const TARGET_URL = `https://linux.do/`;
+  const TARGET_URL = `https://linux.do/challenge`;
 
   // --- 2. 节点预处理 ---
   const internalProxies = [];
