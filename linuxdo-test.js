@@ -25,7 +25,7 @@ async function operator(proxies = [], targetPlatform, context) {
   const PER_PROXY_TIMEOUT = parseInt(args.http_meta_proxy_timeout ?? 10000);
 
   // 检测目标：Linux.do 首页
-  const TARGET_URL = `https://linux.do/`;
+  const TARGET_URL = `https://linux.do/srv/status`;
 
   // --- 2. 节点预处理 ---
   const internalProxies = [];
