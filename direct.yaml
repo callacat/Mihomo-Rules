@@ -26,6 +26,5 @@ payload:
   - DOMAIN-SUFFIX,workers.ddns-ip.net
   - DOMAIN-SUFFIX,gh-proxy.com
   - DOMAIN-SUFFIX,gh-proxy.org
-  - DOMAIN-SUFFIX,cloudflare-ech.com
   - DOMAIN-SUFFIX,,x666.me
   - DOMAIN,api.voct.top
