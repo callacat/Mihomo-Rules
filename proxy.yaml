@@ -4,3 +4,4 @@ payload:
   - DOMAIN,kfc-api.sxxe.net
   - DOMAIN,api.hotaruapi.top
   - DOMAIN-SUFFIX,oracle.com
+  - DOMAIN-SUFFIX,run.claw.cloud
