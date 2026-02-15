@@ -5,3 +5,4 @@ payload:
   - DOMAIN,api.hotaruapi.top
   - DOMAIN-SUFFIX,oracle.com
   - DOMAIN-SUFFIX,run.claw.cloud
+  - DOMAIN,modules.lsposed.org
