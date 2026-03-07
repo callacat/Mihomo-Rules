@@ -26,7 +26,7 @@ payload:
   - DOMAIN-SUFFIX,workers.ddns-ip.net
   - DOMAIN-SUFFIX,gh-proxy.com
   - DOMAIN-SUFFIX,gh-proxy.org
-  - DOMAIN-SUFFIX,,x666.me
+  - DOMAIN-SUFFIX,x666.me
   - DOMAIN,api.voct.top
   - DOMAIN,docker.1panel.live
   - DOMAIN,docker.1panel.dev
