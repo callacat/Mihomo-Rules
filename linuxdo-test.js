@@ -1,9 +1,15 @@
 /**
- * Linux.do 访问检测脚本（强验证版，只保留 [LD] 开头）
- * 目标：筛出 “直达论坛” 或 “验证页稳定可渲染(强验证)” 的节点（B：PASS + CF_OK_STRONG）
+ * Linux.do 访问检测脚本（宽松版，只保留 [LD] 开头）
+ * 目标：筛出“可直接打开 linux.do 首页”或“会进入 Cloudflare 质询页”的节点。
+ *
+ * 变更点：
+ * 1. PASS（直达 Discourse）加 [LD]
+ * 2. CF_CHALLENGE（Cloudflare 质询页）默认也加 [LD]
+ * 3. BLOCKED（1020 / Access denied / 明确封禁）不加 [LD]
+ * 4. 额外使用 cf-mitigated: challenge 头识别 Cloudflare Challenge 页
  *
  * 使用方法示例:
- * timeout=8000&concurrency=10&prefix=[LD] 
+ * timeout=8000&concurrency=10&prefix=[LD]
  *
  * 可选参数：
  * prefix=[LD]         通过节点前缀（默认 "[LD] "）
@@ -12,6 +18,7 @@
  * concurrency=10      并发数（默认 10）
  * clean=1             检测前清理旧前缀（默认 1）
  * debug=0             输出每个节点判定详情（默认 0）
+ * allow_challenge=1   是否把 Cloudflare 质询页也算通过（默认 1）
  */
 
 async function operator(proxies = [], targetPlatform, context) {
@@ -25,19 +32,19 @@ async function operator(proxies = [], targetPlatform, context) {
   const CONCURRENCY = parseInt(args.concurrency ?? 10, 10);
   const CLEAN = parseBool(args.clean, true);
   const DEBUG = parseBool(args.debug, false);
+  const ALLOW_CHALLENGE = parseBool(args.allow_challenge, true);
 
   const META_HOST = args.http_meta_host ?? '127.0.0.1';
   const META_PORT = parseInt(args.http_meta_port ?? 9876, 10);
   const META_PROTOCOL = args.http_meta_protocol ?? 'http';
   const META_START_DELAY = parseInt(args.http_meta_start_delay ?? 3000, 10);
-  const PER_PROXY_TIMEOUT = parseInt(args.http_meta_proxy_timeout ?? Math.max(15000, TIMEOUT * 4), 10);
+  const PER_PROXY_TIMEOUT = parseInt(
+    args.http_meta_proxy_timeout ?? Math.max(15000, TIMEOUT * 4),
+    10
+  );
 
   // 检测目标
   const HOME_URL = args.url ?? 'https://linux.do/';
-  const TURNSTILE_API =
-    args.turnstile_url ??
-    'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-
   const UA =
     args.ua ??
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
@@ -50,15 +57,6 @@ async function operator(proxies = [], targetPlatform, context) {
     'Cache-Control': 'no-cache',
     Pragma: 'no-cache',
     'Upgrade-Insecure-Requests': '1',
-  };
-
-  const JS_HEADERS = {
-    'User-Agent': UA,
-    Accept: '*/*',
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-    'Cache-Control': 'no-cache',
-    Pragma: 'no-cache',
-    Referer: HOME_URL,
   };
 
   if (!Array.isArray(proxies) || proxies.length === 0) return proxies;
@@ -102,7 +100,9 @@ async function operator(proxies = [], targetPlatform, context) {
     const body = JSON.parse(startRes.body);
     metaPid = body.pid;
     metaPorts = body.ports;
-    $.info(`🚀 Linux.do 强验证检测启动 | 节点:${internalProxies.length} | 筛选=B(PASS+CF_OK_STRONG)`);
+    $.info(
+      `🚀 Linux.do 宽松检测启动 | 节点:${internalProxies.length} | ${ALLOW_CHALLENGE ? 'PASS/CF_CHALLENGE 加 [LD]' : '仅 PASS 加 [LD]'}`
+    );
     await $.wait(META_START_DELAY);
   } catch (e) {
     $.error(`❌ Meta 启动失败: ${e.message}`);
@@ -116,13 +116,12 @@ async function operator(proxies = [], targetPlatform, context) {
   await executeAsyncTasks(
     internalProxies.map((proxy, idx) => async () => {
       const port = metaPorts[idx];
-      const r = await checkWithRetry(proxy, port);
+      const r = await checkWithRetry(port);
 
       finished++;
 
       const originalNode = proxies[proxy._proxies_index];
       if (originalNode) {
-        // 写入结果，便于你后续调试/分析
         originalNode._linuxdo = {
           level: r.level,
           status: r.status,
@@ -131,8 +130,8 @@ async function operator(proxies = [], targetPlatform, context) {
         };
       }
 
-      // 只要 PASS 或 CF_OK_STRONG，就加 [LD]
-      if (r.level === 'PASS' || r.level === 'CF_OK_STRONG') {
+      const shouldTag = r.level === 'PASS' || (ALLOW_CHALLENGE && r.level === 'CF_CHALLENGE');
+      if (shouldTag) {
         passed++;
         if (originalNode && !originalNode.name.startsWith(PREFIX)) {
           originalNode.name = `${PREFIX}${originalNode.name}`;
@@ -168,18 +167,17 @@ async function operator(proxies = [], targetPlatform, context) {
 
   // ================= 核心检测 =================
 
-  async function checkWithRetry(proxy, port) {
+  async function checkWithRetry(port) {
     let last;
     for (let i = 0; i <= RETRIES; i++) {
       last = await probeOnce(port);
-      if (last.level === 'PASS' || last.level === 'CF_OK_STRONG' || last.level === 'BLOCKED') return last;
+      if (['PASS', 'BLOCKED', 'CF_CHALLENGE'].includes(last.level)) return last;
       if (i < RETRIES) await $.wait(500);
     }
     return last;
   }
 
   async function probeOnce(port) {
-    // 1) 拉取首页（带少量重定向处理）
     const main = await fetchWithRedirects({
       url: HOME_URL,
       port,
@@ -193,96 +191,65 @@ async function operator(proxies = [], targetPlatform, context) {
     const html = toBodyText(main.res);
 
     if (!main.res || status === 0) {
-      return { level: 'NET_FAIL', status, ms: main.ms, detail: main.error ? String(main.error.message || main.error) : 'network error' };
-    }
-
-    // 2) 直达 Discourse
-    if (looksLikeDiscourse(html) && !looksLikeCFChallenge(html)) {
-      return { level: 'PASS', status, ms: main.ms, detail: 'direct discourse' };
-    }
-
-    // 3) 明确封禁（1020/Access denied）
-    if (looksLikeCFBlocked(html)) {
-      return { level: 'BLOCKED', status, ms: main.ms, detail: 'cloudflare blocked (e.g. 1020)' };
-    }
-
-    // 4) Cloudflare 挑战页：执行“强验证”
-    const cfHeader = isCFHeaders(headers);
-    const challengeMarkup = looksLikeCFChallenge(html);
-
-    if (challengeMarkup || (cfHeader && status === 503)) {
-      // ---- 强验证三项：challenge-platform + turnstile + cdn-cgi/trace 都要 OK ----
-      // 4.1 challenge-platform 资源（优先从 HTML 提取路径）
-      let platformOK = false;
-      let platformInfo = '';
-
-      const challengePath = extractChallengePlatformPath(html);
-      if (challengePath) {
-        const platformUrl = toAbsoluteUrl(challengePath, HOME_URL);
-        const p = await timedRequest({
-          method: 'get',
-          url: platformUrl,
-          timeout: TIMEOUT,
-          headers: JS_HEADERS,
-          proxy: `http://${META_HOST}:${port}`,
-        });
-        const st = toStatus(p.res);
-        const body = toBodyText(p.res);
-        platformOK = isOkResourceStatus(st) && body && body.length > 80;
-        platformInfo = `challenge-platform:${st}`;
-      } else {
-        platformInfo = 'challenge-platform:missing';
-      }
-
-      // 4.2 Turnstile API 必须可加载（无论页面是不是显式 turnstile，都统一测一遍，更贴近你截图场景）
-      let turnstileOK = false;
-      let turnstileInfo = '';
-      {
-        const t = await timedRequest({
-          method: 'get',
-          url: TURNSTILE_API,
-          timeout: TIMEOUT,
-          headers: JS_HEADERS,
-          proxy: `http://${META_HOST}:${port}`,
-        });
-        const st = toStatus(t.res);
-        const body = toBodyText(t.res);
-        turnstileOK = isOkResourceStatus(st) && body && body.toLowerCase().includes('turnstile');
-        turnstileInfo = `turnstile:${st}`;
-      }
-
-      // 4.3 /cdn-cgi/trace 作为 CF 基础链路校验
-      let traceOK = false;
-      let traceInfo = '';
-      {
-        const tr = await timedRequest({
-          method: 'get',
-          url: toAbsoluteUrl('/cdn-cgi/trace', HOME_URL),
-          timeout: TIMEOUT,
-          headers: { ...JS_HEADERS, Accept: 'text/plain,*/*' },
-          proxy: `http://${META_HOST}:${port}`,
-        });
-        const st = toStatus(tr.res);
-        const body = toBodyText(tr.res);
-        traceOK = isOkResourceStatus(st) && body && body.includes('ip=');
-        traceInfo = `trace:${st}`;
-      }
-
-      const strongOK = platformOK && turnstileOK && traceOK;
       return {
-        level: strongOK ? 'CF_OK_STRONG' : 'CF_FAIL',
+        level: 'NET_FAIL',
         status,
         ms: main.ms,
-        detail: `${platformInfo},${turnstileInfo},${traceInfo}`,
+        detail: main.error ? String(main.error.message || main.error) : 'network error',
       };
     }
 
-    // 5) 403/429 且命中 CF 头、但没有 challenge 特征：多数是 WAF 直接拒绝
-    if (cfHeader && (status === 403 || status === 429)) {
-      return { level: 'BLOCKED', status, ms: main.ms, detail: `cloudflare ${status} (no challenge markup)` };
+    const cfHeader = isCFHeaders(headers);
+    const cfMitigated = isCFMitigatedChallenge(headers);
+    const challengeMarkup = looksLikeCFChallenge(html);
+    const blockedMarkup = looksLikeCFBlocked(html);
+
+    // 1) 真正打开到论坛页面
+    if (looksLikeDiscourse(html) && !cfMitigated && !challengeMarkup) {
+      return { level: 'PASS', status, ms: main.ms, detail: 'direct discourse' };
     }
 
-    return { level: 'FAIL', status, ms: main.ms, detail: 'not discourse / not strong-cf' };
+    // 2) 明确封禁（1020 / Access denied）
+    if (blockedMarkup) {
+      return {
+        level: 'BLOCKED',
+        status,
+        ms: main.ms,
+        detail: 'cloudflare blocked (e.g. 1020 / access denied)',
+      };
+    }
+
+    // 3) Cloudflare 官方可识别的 challenge 响应
+    if (cfMitigated) {
+      return {
+        level: 'CF_CHALLENGE',
+        status,
+        ms: main.ms,
+        detail: 'cf-mitigated: challenge',
+      };
+    }
+
+    // 4) 页面特征命中 challenge
+    if (challengeMarkup) {
+      return {
+        level: 'CF_CHALLENGE',
+        status,
+        ms: main.ms,
+        detail: 'cloudflare challenge page',
+      };
+    }
+
+    // 5) 403/429/503 且命中 CF 头：通常也是 WAF / challenge / rate limit
+    if (cfHeader && [403, 429, 503].includes(status)) {
+      return {
+        level: 'BLOCKED',
+        status,
+        ms: main.ms,
+        detail: `cloudflare ${status}`,
+      };
+    }
+
+    return { level: 'FAIL', status, ms: main.ms, detail: 'not discourse' };
   }
 
   // ================= 工具函数 =================
@@ -328,6 +295,7 @@ async function operator(proxies = [], targetPlatform, context) {
       }
       return last;
     }
+
     return last || { res: null, ms: totalMs, error: new Error('redirect failed') };
   }
 
@@ -395,6 +363,10 @@ async function operator(proxies = [], targetPlatform, context) {
     return false;
   }
 
+  function isCFMitigatedChallenge(headers) {
+    return String(headers?.['cf-mitigated'] || '').toLowerCase() === 'challenge';
+  }
+
   function looksLikeDiscourse(html) {
     const h = String(html || '').toLowerCase();
     if (!h) return false;
@@ -427,15 +399,6 @@ async function operator(proxies = [], targetPlatform, context) {
     return false;
   }
 
-  function extractChallengePlatformPath(html) {
-    if (!html) return null;
-    const normalized = String(html).replace(/&amp;/g, '&').replace(/\\\//g, '/');
-    const full = normalized.match(/https?:\/\/[^"'<>\s]+\/cdn-cgi\/challenge-platform\/[^"'<>\s]+/i);
-    if (full) return full[0];
-    const m = normalized.match(/\/cdn-cgi\/challenge-platform\/[^"'<>\s]+/i);
-    return m ? m[0] : null;
-  }
-
   function toAbsoluteUrl(pathOrUrl, baseUrl) {
     try {
       if (!pathOrUrl) return baseUrl;
@@ -445,10 +408,6 @@ async function operator(proxies = [], targetPlatform, context) {
     } catch (e) {
       return baseUrl;
     }
-  }
-
-  function isOkResourceStatus(status) {
-    return status === 200 || status === 204 || status === 304;
   }
 
   function isRedirectStatus(status) {
