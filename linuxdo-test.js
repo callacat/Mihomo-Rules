@@ -6,7 +6,8 @@
  * 1. PASS（直达 Discourse）加 [LD]
  * 2. CF_CHALLENGE（Cloudflare 质询页）默认也加 [LD]
  * 3. BLOCKED（1020 / Access denied / 明确封禁）不加 [LD]
- * 4. 额外使用 cf-mitigated: challenge 头识别 Cloudflare Challenge 页
+ * 4. RATE_LIMITED（You are being rate limited / 临时封禁页）不加 [LD]
+ * 5. 额外使用 cf-mitigated: challenge 头识别 Cloudflare Challenge 页
  *
  * 使用方法示例:
  * timeout=8000&concurrency=10&prefix=[LD]
@@ -19,6 +20,7 @@
  * clean=1             检测前清理旧前缀（默认 1）
  * debug=0             输出每个节点判定详情（默认 0）
  * allow_challenge=1   是否把 Cloudflare 质询页也算通过（默认 1）
+ * allow_rate_limited=0 是否把 rate limited 页也算通过（默认 0，不建议开启）
  */
 
 async function operator(proxies = [], targetPlatform, context) {
@@ -33,6 +35,7 @@ async function operator(proxies = [], targetPlatform, context) {
   const CLEAN = parseBool(args.clean, true);
   const DEBUG = parseBool(args.debug, false);
   const ALLOW_CHALLENGE = parseBool(args.allow_challenge, true);
+  const ALLOW_RATE_LIMITED = parseBool(args.allow_rate_limited, false);
 
   const META_HOST = args.http_meta_host ?? '127.0.0.1';
   const META_PORT = parseInt(args.http_meta_port ?? 9876, 10);
@@ -101,7 +104,7 @@ async function operator(proxies = [], targetPlatform, context) {
     metaPid = body.pid;
     metaPorts = body.ports;
     $.info(
-      `🚀 Linux.do 宽松检测启动 | 节点:${internalProxies.length} | ${ALLOW_CHALLENGE ? 'PASS/CF_CHALLENGE 加 [LD]' : '仅 PASS 加 [LD]'}`
+      `🚀 Linux.do 宽松检测启动 | 节点:${internalProxies.length} | ${ALLOW_CHALLENGE ? 'PASS/CF_CHALLENGE' : '仅 PASS'}${ALLOW_RATE_LIMITED ? '/RATE_LIMITED' : ''} 加 [LD]`
     );
     await $.wait(META_START_DELAY);
   } catch (e) {
@@ -130,7 +133,10 @@ async function operator(proxies = [], targetPlatform, context) {
         };
       }
 
-      const shouldTag = r.level === 'PASS' || (ALLOW_CHALLENGE && r.level === 'CF_CHALLENGE');
+      const shouldTag =
+        r.level === 'PASS' ||
+        (ALLOW_CHALLENGE && r.level === 'CF_CHALLENGE') ||
+        (ALLOW_RATE_LIMITED && r.level === 'RATE_LIMITED');
       if (shouldTag) {
         passed++;
         if (originalNode && !originalNode.name.startsWith(PREFIX)) {
@@ -171,7 +177,7 @@ async function operator(proxies = [], targetPlatform, context) {
     let last;
     for (let i = 0; i <= RETRIES; i++) {
       last = await probeOnce(port);
-      if (['PASS', 'BLOCKED', 'CF_CHALLENGE'].includes(last.level)) return last;
+      if (['PASS', 'BLOCKED', 'CF_CHALLENGE', 'RATE_LIMITED'].includes(last.level)) return last;
       if (i < RETRIES) await $.wait(500);
     }
     return last;
@@ -203,19 +209,25 @@ async function operator(proxies = [], targetPlatform, context) {
     const cfMitigated = isCFMitigatedChallenge(headers);
     const challengeMarkup = looksLikeCFChallenge(html);
     const blockedMarkup = looksLikeCFBlocked(html);
+    const rateLimitedMarkup = looksLikeRateLimited(html, headers, status);
 
-    // 1) 真正打开到论坛页面
-    if (looksLikeDiscourse(html) && !cfMitigated && !challengeMarkup) {
-      return { level: 'PASS', status, ms: main.ms, detail: 'direct discourse' };
-    }
-
-    // 2) 明确封禁（1020 / Access denied）
+    // 1) 明确封禁（1020 / Access denied）
     if (blockedMarkup) {
       return {
         level: 'BLOCKED',
         status,
         ms: main.ms,
         detail: 'cloudflare blocked (e.g. 1020 / access denied)',
+      };
+    }
+
+    // 2) 明确限流/临时封禁页（不要误判成可用 Discourse 页）
+    if (rateLimitedMarkup) {
+      return {
+        level: 'RATE_LIMITED',
+        status,
+        ms: main.ms,
+        detail: rateLimitedDetail(headers, status),
       };
     }
 
@@ -239,7 +251,12 @@ async function operator(proxies = [], targetPlatform, context) {
       };
     }
 
-    // 5) 403/429/503 且命中 CF 头：通常也是 WAF / challenge / rate limit
+    // 5) 真正打开到论坛页面
+    if (looksLikeDiscourse(html) && !cfMitigated && !challengeMarkup && !rateLimitedMarkup) {
+      return { level: 'PASS', status, ms: main.ms, detail: 'direct discourse' };
+    }
+
+    // 6) 403/429/503 且命中 CF 头：通常也是 WAF / challenge / rate limit
     if (cfHeader && [403, 429, 503].includes(status)) {
       return {
         level: 'BLOCKED',
@@ -397,6 +414,36 @@ async function operator(proxies = [], targetPlatform, context) {
     if (h.includes('access denied') && h.includes('cloudflare')) return true;
     if (h.includes('you are unable to access this website')) return true;
     return false;
+  }
+
+  function looksLikeRateLimited(html, headers, status) {
+    const h = String(html || '').toLowerCase();
+    if (!h) {
+      return status === 429 || !!headers?.['retry-after'];
+    }
+
+    const titleRateLimited = /<title[^>]*>\s*you are being rate limited\s*<\/title>/.test(h);
+    const headingRateLimited = /<h1[^>]*>\s*you are being rate limited\s*<\/h1>/.test(h);
+    const bannedText = h.includes('we have banned you temporarily from accessing this website');
+    const tryLaterText = h.includes('please try again later');
+    const cf1015 = h.includes('error 1015');
+    const tooManyRequests = h.includes('too many requests');
+    const hasRetryAfter = !!headers?.['retry-after'];
+
+    if (cf1015) return true;
+    if ((titleRateLimited || headingRateLimited) && (bannedText || tryLaterText || status === 429 || hasRetryAfter)) return true;
+    if (bannedText && (status === 429 || hasRetryAfter || titleRateLimited || headingRateLimited)) return true;
+    if (status === 429 && (titleRateLimited || headingRateLimited || bannedText || tooManyRequests)) return true;
+    if (hasRetryAfter && (titleRateLimited || headingRateLimited || bannedText)) return true;
+
+    return false;
+  }
+
+  function rateLimitedDetail(headers, status) {
+    const retryAfter = headers?.['retry-after'];
+    if (retryAfter) return `rate limited (status=${status || 0}, retry-after=${retryAfter})`;
+    if (status === 429) return 'rate limited (429)';
+    return 'rate limited / temporary banned page';
   }
 
   function toAbsoluteUrl(pathOrUrl, baseUrl) {
