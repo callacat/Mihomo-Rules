@@ -1,37 +1,15 @@
-/**
- * Linux.do 访问检测脚本（宽松版，只保留 [LD] 开头）
- * 目标：筛出“可直接打开 linux.do 首页”或“会进入 Cloudflare 质询页”的节点。
- *
- * 变更点：
- * 1. PASS（直达 Discourse）加 [LD]
- * 2. CF_CHALLENGE（Cloudflare 质询页）默认也加 [LD]
- * 3. BLOCKED（1020 / Access denied / 明确封禁）不加 [LD]
- * 4. RATE_LIMITED（You are being rate limited / 临时封禁页）不加 [LD]
- * 5. 额外使用 cf-mitigated: challenge 头识别 Cloudflare Challenge 页
- *
- * 使用方法示例:
- * timeout=8000&concurrency=10&prefix=[LD]
- *
- * 可选参数：
- * prefix=[LD]         通过节点前缀（默认 "[LD] "）
- * timeout=8000        单次请求超时(ms，默认 8000)
- * retries=1           网络失败重试次数（默认 1）
- * concurrency=10      并发数（默认 10）
- * clean=1             检测前清理旧前缀（默认 1）
- * debug=0             输出每个节点判定详情（默认 0）
- * allow_challenge=1   是否把 Cloudflare 质询页也算通过（默认 1）
- * allow_rate_limited=0 是否把 rate limited 页也算通过（默认 0，不建议开启）
- */
-
 async function operator(proxies = [], targetPlatform, context) {
   const $ = $substore;
   const args = $arguments || {};
+  const cacheStore = typeof scriptResourceCache !== 'undefined' ? scriptResourceCache : undefined;
 
-  // ---------- 参数 ----------
   const PREFIX = args.prefix ?? '[LD] ';
-  const TIMEOUT = parseInt(args.timeout ?? 8000, 10);
-  const RETRIES = parseInt(args.retries ?? 1, 10);
-  const CONCURRENCY = parseInt(args.concurrency ?? 10, 10);
+  const TIMEOUT = parseInt(args.timeout ?? 3000, 10);
+  const RETRIES = parseInt(args.retries ?? 0, 10);
+  const RETRY_DELAY = parseInt(args.retry_delay ?? 250, 10);
+  const CONCURRENCY = parseInt(args.concurrency ?? 15, 10);
+  const CACHE_ENABLED = parseBool(args.cache, true) && !!cacheStore;
+  const DISABLE_FAILED_CACHE = parseBool(args.disable_failed_cache ?? args.ignore_failed_error, false);
   const CLEAN = parseBool(args.clean, true);
   const DEBUG = parseBool(args.debug, false);
   const ALLOW_CHALLENGE = parseBool(args.allow_challenge, true);
@@ -40,13 +18,13 @@ async function operator(proxies = [], targetPlatform, context) {
   const META_HOST = args.http_meta_host ?? '127.0.0.1';
   const META_PORT = parseInt(args.http_meta_port ?? 9876, 10);
   const META_PROTOCOL = args.http_meta_protocol ?? 'http';
-  const META_START_DELAY = parseInt(args.http_meta_start_delay ?? 3000, 10);
+  const META_START_DELAY = parseInt(args.http_meta_start_delay ?? 1000, 10);
   const PER_PROXY_TIMEOUT = parseInt(
-    args.http_meta_proxy_timeout ?? Math.max(15000, TIMEOUT * 4),
+    args.http_meta_proxy_timeout ?? Math.max(6000, TIMEOUT * (RETRIES + 1) + RETRY_DELAY * RETRIES + 2500),
     10
   );
+  const LOG_EVERY = Math.max(20, CONCURRENCY);
 
-  // 检测目标
   const HOME_URL = args.url ?? 'https://linux.do/';
   const UA =
     args.ua ??
@@ -64,7 +42,6 @@ async function operator(proxies = [], targetPlatform, context) {
 
   if (!Array.isArray(proxies) || proxies.length === 0) return proxies;
 
-  // ---------- 清理旧前缀，避免残留 ----------
   if (CLEAN) {
     for (const p of proxies) {
       if (!p || typeof p.name !== 'string') continue;
@@ -72,21 +49,23 @@ async function operator(proxies = [], targetPlatform, context) {
     }
   }
 
-  // ---------- 节点转 internal ----------
   const internalProxies = [];
   proxies.forEach((proxy, index) => {
     try {
       const node = ProxyUtils.produce([{ ...proxy }], 'ClashMeta', 'internal')?.[0];
       if (node) {
-        for (const key in proxy) if (/^_/i.test(key)) node[key] = proxy[key];
+        for (const key in proxy) {
+          if (/^_/i.test(key)) node[key] = proxy[key];
+        }
         internalProxies.push({ ...node, _proxies_index: index });
       }
-    } catch (e) {}
+    } catch (e) {
+      $.info(`节点转换失败: ${proxy?.name || 'Unknown'} | ${e.message || e}`);
+    }
   });
 
   if (internalProxies.length === 0) return proxies;
 
-  // ---------- 启动 HTTP Meta ----------
   const metaApiBase = `${META_PROTOCOL}://${META_HOST}:${META_PORT}`;
   const metaTimeoutCalc = META_START_DELAY + internalProxies.length * PER_PROXY_TIMEOUT;
 
@@ -101,64 +80,64 @@ async function operator(proxies = [], targetPlatform, context) {
       body: JSON.stringify({ proxies: internalProxies, timeout: metaTimeoutCalc }),
     });
     const body = JSON.parse(startRes.body);
+    if (!body.pid || !Array.isArray(body.ports)) throw new Error('Meta 未返回 PID 或 ports');
+
     metaPid = body.pid;
     metaPorts = body.ports;
     $.info(
-      `🚀 Linux.do 宽松检测启动 | 节点:${internalProxies.length} | ${ALLOW_CHALLENGE ? 'PASS/CF_CHALLENGE' : '仅 PASS'}${ALLOW_RATE_LIMITED ? '/RATE_LIMITED' : ''} 加 [LD]`
+      `🚀 Linux.do 检测启动 | 节点:${internalProxies.length} | ${ALLOW_CHALLENGE ? 'PASS/CF_CHALLENGE' : '仅 PASS'}${ALLOW_RATE_LIMITED ? '/RATE_LIMITED' : ''} 加 [LD] | 缓存:${CACHE_ENABLED ? 'on' : 'off'}`
     );
     await $.wait(META_START_DELAY);
   } catch (e) {
-    $.error(`❌ Meta 启动失败: ${e.message}`);
+    $.error(`❌ Meta 启动失败: ${e.message || e}`);
     return proxies;
   }
 
-  // ---------- 并发检测 ----------
   let finished = 0;
   let passed = 0;
 
   await executeAsyncTasks(
     internalProxies.map((proxy, idx) => async () => {
       const port = metaPorts[idx];
-      const r = await checkWithRetry(port);
+      const originalNode = proxies[proxy._proxies_index];
+      const result = await resolveProbe(proxy, port);
 
       finished++;
 
-      const originalNode = proxies[proxy._proxies_index];
       if (originalNode) {
         originalNode._linuxdo = {
-          level: r.level,
-          status: r.status,
-          ms: r.ms,
-          detail: r.detail,
+          level: result.level,
+          status: result.status,
+          ms: result.ms,
+          detail: result.detail,
         };
       }
 
       const shouldTag =
-        r.level === 'PASS' ||
-        (ALLOW_CHALLENGE && r.level === 'CF_CHALLENGE') ||
-        (ALLOW_RATE_LIMITED && r.level === 'RATE_LIMITED');
-      if (shouldTag) {
+        result.level === 'PASS' ||
+        (ALLOW_CHALLENGE && result.level === 'CF_CHALLENGE') ||
+        (ALLOW_RATE_LIMITED && result.level === 'RATE_LIMITED');
+
+      if (shouldTag && originalNode) {
         passed++;
-        if (originalNode && !originalNode.name.startsWith(PREFIX)) {
+        if (!originalNode.name.startsWith(PREFIX)) {
           originalNode.name = `${PREFIX}${originalNode.name}`;
         }
       }
 
       if (DEBUG) {
         $.info(
-          `[${finished}/${internalProxies.length}] ${proxy.name || originalNode?.name || 'Unknown'} -> ` +
-            `${r.level} (status=${r.status}, ${r.ms}ms) ${r.detail ? '| ' + r.detail : ''}`
+          `[${finished}/${internalProxies.length}] ${proxy.name || originalNode?.name || 'Unknown'} -> ${result.level} (status=${result.status}, ${result.ms}ms)${result.detail ? ' | ' + result.detail : ''}`
         );
       }
 
-      if (finished % 10 === 0 || finished === internalProxies.length) {
+      if (finished % LOG_EVERY === 0 || finished === internalProxies.length) {
         $.info(`进度: ${finished}/${internalProxies.length} | 通过(加LD): ${passed}`);
       }
     }),
     { concurrency: CONCURRENCY }
   );
 
-  // ---------- 关闭 meta ----------
   try {
     await http({
       method: 'post',
@@ -166,19 +145,29 @@ async function operator(proxies = [], targetPlatform, context) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pid: [metaPid] }),
     });
-  } catch (e) {}
+  } catch (e) {
+    $.info(`Meta 关闭失败: ${e.message || e}`);
+  }
 
   $.info(`🏁 检测结束 | 通过(加LD): ${passed}/${internalProxies.length}`);
   return proxies;
 
-  // ================= 核心检测 =================
+  async function resolveProbe(proxy, port) {
+    const cacheId = getCacheId(proxy);
+    const cached = getCachedResult(cacheId);
+    if (cached) return cached;
+
+    const result = await checkWithRetry(port);
+    setCachedResult(cacheId, result);
+    return result;
+  }
 
   async function checkWithRetry(port) {
-    let last;
+    let last = { level: 'FAIL', status: 0, ms: 0, detail: 'unknown' };
     for (let i = 0; i <= RETRIES; i++) {
       last = await probeOnce(port);
       if (['PASS', 'BLOCKED', 'CF_CHALLENGE', 'RATE_LIMITED'].includes(last.level)) return last;
-      if (i < RETRIES) await $.wait(500);
+      if (i < RETRIES) await $.wait(RETRY_DELAY);
     }
     return last;
   }
@@ -211,7 +200,6 @@ async function operator(proxies = [], targetPlatform, context) {
     const blockedMarkup = looksLikeCFBlocked(html);
     const rateLimitedMarkup = looksLikeRateLimited(html, headers, status);
 
-    // 1) 明确封禁（1020 / Access denied）
     if (blockedMarkup) {
       return {
         level: 'BLOCKED',
@@ -221,7 +209,6 @@ async function operator(proxies = [], targetPlatform, context) {
       };
     }
 
-    // 2) 明确限流/临时封禁页（不要误判成可用 Discourse 页）
     if (rateLimitedMarkup) {
       return {
         level: 'RATE_LIMITED',
@@ -231,7 +218,6 @@ async function operator(proxies = [], targetPlatform, context) {
       };
     }
 
-    // 3) Cloudflare 官方可识别的 challenge 响应
     if (cfMitigated) {
       return {
         level: 'CF_CHALLENGE',
@@ -241,7 +227,6 @@ async function operator(proxies = [], targetPlatform, context) {
       };
     }
 
-    // 4) 页面特征命中 challenge
     if (challengeMarkup) {
       return {
         level: 'CF_CHALLENGE',
@@ -251,12 +236,10 @@ async function operator(proxies = [], targetPlatform, context) {
       };
     }
 
-    // 5) 真正打开到论坛页面
     if (looksLikeDiscourse(html) && !cfMitigated && !challengeMarkup && !rateLimitedMarkup) {
       return { level: 'PASS', status, ms: main.ms, detail: 'direct discourse' };
     }
 
-    // 6) 403/429/503 且命中 CF 头：通常也是 WAF / challenge / rate limit
     if (cfHeader && [403, 429, 503].includes(status)) {
       return {
         level: 'BLOCKED',
@@ -269,7 +252,40 @@ async function operator(proxies = [], targetPlatform, context) {
     return { level: 'FAIL', status, ms: main.ms, detail: 'not discourse' };
   }
 
-  // ================= 工具函数 =================
+  function getCacheId(proxy) {
+    if (!CACHE_ENABLED) return '';
+    const stableProxy = Object.fromEntries(
+      Object.entries(proxy).filter(([key]) => !/^(name|collectionName|subName|id|_.*)$/i.test(key))
+    );
+    return `linuxdo:availability:${HOME_URL}:${TIMEOUT}:${RETRIES}:${RETRY_DELAY}:${ALLOW_CHALLENGE}:${ALLOW_RATE_LIMITED}:${JSON.stringify(HTML_HEADERS)}:${JSON.stringify(stableProxy)}`;
+  }
+
+  function getCachedResult(cacheId) {
+    if (!CACHE_ENABLED || !cacheId) return null;
+    try {
+      const cached = cacheStore.get(cacheId);
+      if (!cached || typeof cached.level !== 'string') return null;
+      if (cached.level !== 'PASS' && DISABLE_FAILED_CACHE) return null;
+      return cached;
+    } catch (e) {
+      $.info(`缓存读取失败: ${e.message || e}`);
+      return null;
+    }
+  }
+
+  function setCachedResult(cacheId, result) {
+    if (!CACHE_ENABLED || !cacheId) return;
+    try {
+      cacheStore.set(cacheId, {
+        level: result.level,
+        status: result.status,
+        ms: result.ms,
+        detail: result.detail,
+      });
+    } catch (e) {
+      $.info(`缓存写入失败: ${e.message || e}`);
+    }
+  }
 
   async function timedRequest(opt) {
     const start = Date.now();
@@ -291,7 +307,7 @@ async function operator(proxies = [], targetPlatform, context) {
       if (!currentUrl || visited.has(currentUrl)) break;
       visited.add(currentUrl);
 
-      const r = await timedRequest({
+      const result = await timedRequest({
         method: 'get',
         url: currentUrl,
         timeout,
@@ -301,15 +317,16 @@ async function operator(proxies = [], targetPlatform, context) {
         proxy: `http://${META_HOST}:${port}`,
       });
 
-      totalMs += r.ms;
-      last = { res: r.res, ms: totalMs, error: r.error };
+      totalMs += result.ms;
+      last = { res: result.res, ms: totalMs, error: result.error };
 
-      const st = toStatus(r.res);
-      const hdr = normalizeHeaders(r.res?.headers);
-      if (isRedirectStatus(st) && hdr.location) {
-        currentUrl = toAbsoluteUrl(String(hdr.location), currentUrl);
+      const status = toStatus(result.res);
+      const normalizedHeaders = normalizeHeaders(result.res?.headers);
+      if (isRedirectStatus(status) && normalizedHeaders.location) {
+        currentUrl = toAbsoluteUrl(String(normalizedHeaders.location), currentUrl);
         continue;
       }
+
       return last;
     }
 
@@ -318,6 +335,9 @@ async function operator(proxies = [], targetPlatform, context) {
 
   async function http(opt = {}) {
     const method = (opt.method || 'get').toLowerCase();
+    if (typeof $.http[method] !== 'function') {
+      throw new Error(`$.http.${method} 不存在`);
+    }
     return await $.http[method](opt);
   }
 
@@ -325,10 +345,13 @@ async function operator(proxies = [], targetPlatform, context) {
     return new Promise((resolve) => {
       let index = 0;
       let running = 0;
+
       function next() {
         while (index < tasks.length && running < concurrency) {
           tasks[index++]()
-            .catch(() => {})
+            .catch((e) => {
+              $.info(`任务执行失败: ${e.message || e}`);
+            })
             .finally(() => {
               running--;
               if (index >= tasks.length && running === 0) resolve();
@@ -337,6 +360,7 @@ async function operator(proxies = [], targetPlatform, context) {
           running++;
         }
       }
+
       next();
     });
   }
@@ -374,7 +398,7 @@ async function operator(proxies = [], targetPlatform, context) {
 
   function isCFHeaders(headers) {
     if (!headers) return false;
-    const server = String(headers['server'] || '').toLowerCase();
+    const server = String(headers.server || '').toLowerCase();
     if (server.includes('cloudflare')) return true;
     if (headers['cf-ray'] || headers['cf-cache-status']) return true;
     return false;
@@ -450,7 +474,7 @@ async function operator(proxies = [], targetPlatform, context) {
     try {
       if (!pathOrUrl) return baseUrl;
       if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
-      const base = baseUrl.endsWith('/') ? baseUrl : baseUrl + '/';
+      const base = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
       return new URL(pathOrUrl, base).toString();
     } catch (e) {
       return baseUrl;

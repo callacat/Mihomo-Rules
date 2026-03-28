@@ -1,26 +1,34 @@
-/**
- * ChatGPT 批量检测脚本 (增强指纹/调试版)
- * * * 使用方法 (Argument 参数):
- * timeout=5000&concurrency=10&prefix=[GPT] 
- */
-
 async function operator(proxies = [], targetPlatform, context) {
   const $ = $substore;
   const args = $arguments || {};
+  const cacheStore = typeof scriptResourceCache !== 'undefined' ? scriptResourceCache : undefined;
 
   const PREFIX = args.prefix ?? '[GPT] ';
-  const TIMEOUT = parseInt(args.timeout ?? 5000);
-  const RETRIES = parseInt(args.retries ?? 1);
-  const CONCURRENCY = parseInt(args.concurrency ?? 10);
-  
-  const META_HOST = args.http_meta_host ?? '127.0.0.1';
-  const META_PORT = parseInt(args.http_meta_port ?? 9876);
-  const META_PROTOCOL = args.http_meta_protocol ?? 'http';
-  const META_START_DELAY = parseInt(args.http_meta_start_delay ?? 3000);
-  const PER_PROXY_TIMEOUT = parseInt(args.http_meta_proxy_timeout ?? 10000);
+  const TIMEOUT = parseInt(args.timeout ?? 2500, 10);
+  const RETRIES = parseInt(args.retries ?? 0, 10);
+  const RETRY_DELAY = parseInt(args.retry_delay ?? 250, 10);
+  const CONCURRENCY = parseInt(args.concurrency ?? 20, 10);
+  const CACHE_ENABLED = parseBool(args.cache, true) && !!cacheStore;
+  const DISABLE_FAILED_CACHE = parseBool(args.disable_failed_cache ?? args.ignore_failed_error, false);
 
-  // 更换为更通用的网页检测地址
-  const TARGET_URL = `https://chatgpt.com`;
+  const META_HOST = args.http_meta_host ?? '127.0.0.1';
+  const META_PORT = parseInt(args.http_meta_port ?? 9876, 10);
+  const META_PROTOCOL = args.http_meta_protocol ?? 'http';
+  const META_START_DELAY = parseInt(args.http_meta_start_delay ?? 1000, 10);
+  const PER_PROXY_TIMEOUT = parseInt(
+    args.http_meta_proxy_timeout ?? Math.max(4000, TIMEOUT * (RETRIES + 1) + RETRY_DELAY * RETRIES + 1500),
+    10
+  );
+  const LOG_EVERY = Math.max(20, CONCURRENCY);
+
+  const TARGET_URL = 'https://chatgpt.com';
+  const REQUEST_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Sec-Fetch-Mode': 'navigate',
+    Referer: 'https://www.google.com/',
+  };
 
   const internalProxies = [];
   proxies.forEach((proxy, index) => {
@@ -28,35 +36,39 @@ async function operator(proxies = [], targetPlatform, context) {
       const node = ProxyUtils.produce([{ ...proxy }], 'ClashMeta', 'internal')?.[0];
       if (node) {
         for (const key in proxy) {
-            if (/^_/i.test(key)) node[key] = proxy[key];
+          if (/^_/i.test(key)) node[key] = proxy[key];
         }
         internalProxies.push({ ...node, _proxies_index: index });
       }
-    } catch (e) {}
+    } catch (e) {
+      $.info(`节点转换失败: ${proxy?.name || 'Unknown'} | ${e.message || e}`);
+    }
   });
 
   if (internalProxies.length === 0) return proxies;
 
   const metaApiBase = `${META_PROTOCOL}://${META_HOST}:${META_PORT}`;
-  const metaTimeoutCalc = META_START_DELAY + (internalProxies.length * PER_PROXY_TIMEOUT);
+  const metaTimeoutCalc = META_START_DELAY + internalProxies.length * PER_PROXY_TIMEOUT;
 
   let metaPid;
   let metaPorts = [];
 
   try {
     const startRes = await http({
-        method: 'post',
-        url: `${metaApiBase}/start`,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ proxies: internalProxies, timeout: metaTimeoutCalc })
+      method: 'post',
+      url: `${metaApiBase}/start`,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ proxies: internalProxies, timeout: metaTimeoutCalc }),
     });
     const body = JSON.parse(startRes.body);
+    if (!body.pid || !Array.isArray(body.ports)) throw new Error('Meta 未返回 PID 或 ports');
+
     metaPid = body.pid;
     metaPorts = body.ports;
-    $.info(`🚀 检测启动 | 节点:${internalProxies.length}`);
-    await $.wait(META_START_DELAY); 
+    $.info(`🚀 ChatGPT 检测启动 | 节点:${internalProxies.length} | 缓存:${CACHE_ENABLED ? 'on' : 'off'}`);
+    await $.wait(META_START_DELAY);
   } catch (e) {
-    $.error(`❌ Meta 启动失败: ${e.message}`);
+    $.error(`❌ Meta 启动失败: ${e.message || e}`);
     return proxies;
   }
 
@@ -65,93 +77,140 @@ async function operator(proxies = [], targetPlatform, context) {
 
   await executeAsyncTasks(
     internalProxies.map((proxy, idx) => async () => {
-        const port = metaPorts[idx];
-        const isSupported = await checkWithRetry(proxy, port);
-        
-        finishedCount++;
-        if (isSupported) {
-            validCount++;
-            const originalNode = proxies[proxy._proxies_index];
-            if (!originalNode.name.includes(PREFIX)) {
-                originalNode.name = `${PREFIX}${originalNode.name}`;
-            }
+      const originalNode = proxies[proxy._proxies_index];
+      const port = metaPorts[idx];
+      const result = await resolveSupport(proxy, port);
+
+      finishedCount++;
+      if (result.ok && originalNode) {
+        validCount++;
+        if (!originalNode.name.startsWith(PREFIX)) {
+          originalNode.name = `${PREFIX}${originalNode.name}`;
         }
-        if (finishedCount % 5 === 0) $.info(`进度: ${finishedCount}/${internalProxies.length} (有效: ${validCount})`);
+      }
+
+      if (finishedCount % LOG_EVERY === 0 || finishedCount === internalProxies.length) {
+        $.info(`进度: ${finishedCount}/${internalProxies.length} (有效: ${validCount})`);
+      }
     }),
     { concurrency: CONCURRENCY }
   );
 
   try {
     await http({
-        method: 'post',
-        url: `${metaApiBase}/stop`,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pid: [metaPid] })
+      method: 'post',
+      url: `${metaApiBase}/stop`,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pid: [metaPid] }),
     });
-  } catch (e) {}
+    $.info('🏁 ChatGPT 检测结束，Meta 已关闭');
+  } catch (e) {
+    $.info(`Meta 关闭失败: ${e.message || e}`);
+  }
 
   return proxies;
 
-  // ================= 核心逻辑 =================
+  async function resolveSupport(proxy, port) {
+    const cacheId = getCacheId(proxy);
+    const cached = getCachedResult(cacheId);
+    if (cached) return cached;
 
-  async function checkWithRetry(proxy, port) {
+    const result = await checkWithRetry(port);
+    setCachedResult(cacheId, result);
+    return result;
+  }
+
+  async function checkWithRetry(port) {
     for (let i = 0; i <= RETRIES; i++) {
-        try {
-            const res = await http({
-                method: 'get',
-                url: TARGET_URL,
-                timeout: TIMEOUT,
-                headers: {
-                    // 模拟现代浏览器 Header
-                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Referer': 'https://www.google.com/'
-                },
-                proxy: `http://${META_HOST}:${port}`
-            });
-            
-            const status = parseInt(res.status || res.statusCode || 0);
+      try {
+        const res = await http({
+          method: 'get',
+          url: TARGET_URL,
+          timeout: TIMEOUT,
+          headers: REQUEST_HEADERS,
+          proxy: `http://${META_HOST}:${port}`,
+        });
 
-            // ChatGPT 正常访问通常返回 200
-            if (status === 200) return true;
-            
-            // 如果返回 403，通常是 Cloudflare 拦截，也可能是地区不支持。
-            // 在脚本环境中，很多时候 403 是因为脚本指纹被封。
-            // 如果你确认节点可用，可以尝试将 403 也视为通过（仅限检测网页时），但这样准确率会下降。
-            $.info(`[${proxy.name}] 返回状态码: ${status}`);
-            
-            return false;
-        } catch (e) {
-            if (i === RETRIES) {
-                // $.info(`[${proxy.name}] 错误: ${e.message}`);
-            }
-            await $.wait(500);
+        const status = parseInt(res.status || res.statusCode || 0, 10);
+        if (status === 200) return { ok: true };
+        if (i < RETRIES) {
+          await $.wait(RETRY_DELAY);
+          continue;
         }
+        return { ok: false };
+      } catch (e) {
+        if (i < RETRIES) await $.wait(RETRY_DELAY);
+      }
     }
-    return false;
+    return { ok: false };
+  }
+
+  function getCacheId(proxy) {
+    if (!CACHE_ENABLED) return '';
+    const stableProxy = Object.fromEntries(
+      Object.entries(proxy).filter(([key]) => !/^(name|collectionName|subName|id|_.*)$/i.test(key))
+    );
+    return `chatgpt:availability:${TARGET_URL}:${TIMEOUT}:${RETRIES}:${RETRY_DELAY}:${JSON.stringify(REQUEST_HEADERS)}:${JSON.stringify(stableProxy)}`;
+  }
+
+  function getCachedResult(cacheId) {
+    if (!CACHE_ENABLED || !cacheId) return null;
+    try {
+      const cached = cacheStore.get(cacheId);
+      if (!cached || typeof cached.ok !== 'boolean') return null;
+      if (!cached.ok && DISABLE_FAILED_CACHE) return null;
+      return cached;
+    } catch (e) {
+      $.info(`缓存读取失败: ${e.message || e}`);
+      return null;
+    }
+  }
+
+  function setCachedResult(cacheId, result) {
+    if (!CACHE_ENABLED || !cacheId) return;
+    try {
+      cacheStore.set(cacheId, { ok: !!result.ok });
+    } catch (e) {
+      $.info(`缓存写入失败: ${e.message || e}`);
+    }
   }
 
   async function http(opt = {}) {
     const method = (opt.method || 'get').toLowerCase();
+    if (typeof $.http[method] !== 'function') {
+      throw new Error(`$.http.${method} 不存在`);
+    }
     return await $.http[method](opt);
+  }
+
+  function parseBool(value, defaultValue = false) {
+    if (value === undefined || value === null) return defaultValue;
+    const normalized = String(value).trim().toLowerCase();
+    if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+    return defaultValue;
   }
 
   function executeAsyncTasks(tasks, { concurrency = 1 } = {}) {
     return new Promise((resolve) => {
       let index = 0;
       let running = 0;
+
       function next() {
         while (index < tasks.length && running < concurrency) {
-          tasks[index++]().finally(() => {
-            running--;
-            if (index >= tasks.length && running === 0) resolve();
-            else next();
-          });
+          tasks[index++]()
+            .catch((e) => {
+              $.info(`任务执行失败: ${e.message || e}`);
+            })
+            .finally(() => {
+              running--;
+              if (index >= tasks.length && running === 0) resolve();
+              else next();
+            });
           running++;
         }
       }
+
       next();
     });
   }
