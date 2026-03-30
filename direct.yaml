@@ -28,5 +28,13 @@ payload:
   - DOMAIN-SUFFIX,gh-proxy.org
   - DOMAIN-SUFFIX,x666.me
   - DOMAIN,api.voct.top
+  - DOMAIN,bncr.562455.xyz
+  - DOMAIN,bncr.2020714.xyz
+  - DOMAIN,bncr.321369247.xyz
+  - DOMAIN,bncr.121518.xyz
+  - DOMAIN,aming.chaoyue.gq
+  - DOMAIN,wj.wolai.gq
+  - DOMAIN,bncr.619030.xyz
+  - DOMAIN,app.chatwoot.com
   - DOMAIN,docker.1panel.live
   - DOMAIN,docker.1panel.dev
