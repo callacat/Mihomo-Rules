@@ -36,5 +36,7 @@ payload:
   - DOMAIN,wj.wolai.gq
   - DOMAIN,bncr.619030.xyz
   - DOMAIN,app.chatwoot.com
+  - DOMAIN,bncr.219796.xyz
   - DOMAIN,docker.1panel.live
   - DOMAIN,docker.1panel.dev
+  #- IP-CIDR,
