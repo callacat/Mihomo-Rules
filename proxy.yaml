@@ -14,3 +14,4 @@ payload:
   - DOMAIN,www.gstatic.com
   - DOMAIN,ygpy.net
   - DOMAIN,3a.lol
+  - DOMAIN-SUFFIX,gofile.io
