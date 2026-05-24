@@ -14,7 +14,7 @@ payload:
   - DOMAIN-SUFFIX,dsd.de5.net
   - DOMAIN-SUFFIX,dsw.de5.net
   - DOMAIN-SUFFIX,workers.ddns-ip.net
-  # - DOMAIN,international-gfe.download.nvidia.com
+  - DOMAIN,international-gfe.download.nvidia.com
   - DOMAIN,openwrt.ai
   - DOMAIN-KEYWORD,test-ipv6
   - DOMAIN-SUFFIX,story51.com
