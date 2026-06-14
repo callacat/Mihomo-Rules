@@ -5,3 +5,6 @@ payload:
   - DOMAIN,ai.rosmontis.de
   - DOMAIN,freeapi.dgbmc.top
   - DOMAIN,ai.littlesheep.cc
+  - DOMAIN,chat.qwen.ai
+  - DOMAIN,chat.baidu.com
+  - DOMAIN,opencode.ai
