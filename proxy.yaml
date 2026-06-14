@@ -1,17 +1,6 @@
 payload:
-  - DOMAIN,elysiver.h-e.top
-  - DOMAIN,gyapi.zxiaoruan.cn
-  - DOMAIN,kfc-api.sxxe.net
-  - DOMAIN,api.hotaruapi.top
   - DOMAIN-SUFFIX,oracle.com
-  - DOMAIN-SUFFIX,run.claw.cloud
   - DOMAIN,modules.lsposed.org
   - DOMAIN,oraarm.dsdog.tk
-  - DOMAIN,anyrouter.top
-  - DOMAIN,clove.cc.cd
-  - DOMAIN,codex.hyw.me
-  - DOMAIN,aidrouter.qzz.io
-  - DOMAIN,www.gstatic.com
-  - DOMAIN,ygpy.net
   - DOMAIN,3a.lol
   - DOMAIN-SUFFIX,gofile.io
