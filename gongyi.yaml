@@ -13,3 +13,5 @@ payload:
   - DOMAIN,cloudflare-ech.com
   - DOMAIN,hotaruapi.com
   - DOMAIN,api.chengmo.cc.cd
+  - DOMAIN,muyuan.do
+  - DOMAIN-SUFFIX,venlacy.com
