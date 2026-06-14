@@ -11,3 +11,5 @@ payload:
   - DOMAIN-SUFFIX,x666.me
   - DOMAIN-SUFFIX,cloudflare.com
   - DOMAIN,cloudflare-ech.com
+  - DOMAIN,hotaruapi.com
+  - DOMAIN,api.chengmo.cc.cd
