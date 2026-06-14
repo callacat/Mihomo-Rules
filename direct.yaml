@@ -30,8 +30,6 @@ payload:
   - DOMAIN-SUFFIX,workers.ddns-ip.net
   - DOMAIN-SUFFIX,gh-proxy.com
   - DOMAIN-SUFFIX,gh-proxy.org
-  - DOMAIN-SUFFIX,x666.me
-  - DOMAIN,api.voct.top
   - DOMAIN,bncr.562455.xyz
   - DOMAIN,bncr.2020714.xyz
   - DOMAIN,bncr.321369247.xyz
@@ -43,5 +41,5 @@ payload:
   - DOMAIN,bncr.219796.xyz
   - DOMAIN,docker.1panel.live
   - DOMAIN,docker.1panel.dev
-  
+  - DOMAIN-SUFFIX,cloudflare.com
   #- IP-CIDR,
