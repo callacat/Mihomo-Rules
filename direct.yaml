@@ -41,5 +41,5 @@ payload:
   - DOMAIN,bncr.219796.xyz
   - DOMAIN,docker.1panel.live
   - DOMAIN,docker.1panel.dev
-  - DOMAIN-SUFFIX,cloudflare.com
+  # - DOMAIN-SUFFIX,cloudflare.com
   #- IP-CIDR,
