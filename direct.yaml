@@ -29,7 +29,7 @@ payload:
   - DOMAIN-SUFFIX,pool.ntp.org
   - DOMAIN-SUFFIX,workers.ddns-ip.net
   - DOMAIN-SUFFIX,gh-proxy.com
-  - DOMAIN-SUFFIX,gh-proxy.org
+  # - DOMAIN-SUFFIX,gh-proxy.org
   - DOMAIN,bncr.562455.xyz
   - DOMAIN,bncr.2020714.xyz
   - DOMAIN,bncr.321369247.xyz
