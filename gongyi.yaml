@@ -7,7 +7,6 @@ payload:
   - DOMAIN,chat.qwen.ai
   - DOMAIN,chat.baidu.com
   - DOMAIN,opencode.ai
-  - DOMAIN,wzw.pp.ua
   - DOMAIN-SUFFIX,x666.me
   - DOMAIN-SUFFIX,cloudflare.com
   - DOMAIN,cloudflare-ech.com
