@@ -10,3 +10,4 @@ payload:
   - DOMAIN,gist.github.com
   - DOMAIN,api.42w.shop
   - DOMAIN,wzw.pp.ua
+  - DOMAIN,registry-1.docker.io
