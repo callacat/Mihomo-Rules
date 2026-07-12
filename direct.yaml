@@ -15,6 +15,7 @@ payload:
   - DOMAIN-SUFFIX,workers.ddns-ip.net
   - DOMAIN,openwrt.ai
   - DOMAIN-KEYWORD,test-ipv6
-  - DOMAIN-SUFFIX,story51.com
   - DOMAIN,time.windows.com
   - DOMAIN-SUFFIX,pool.ntp.org
+  - DOMAIN-SUFFIX,gh-proxy.org
+  - DOMAIN-SUFFIX,gh-proxy.com
