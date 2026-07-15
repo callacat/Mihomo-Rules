@@ -38,3 +38,5 @@ payload:
   - DOMAIN,docker.367231.xyz
   - DOMAIN,hub.1panel.dev
   - DOMAIN,dockerproxy.cool
+  - DOMAIN,api.baipiao.eu.org
+  - DOMAIN,ai.lfree.org
