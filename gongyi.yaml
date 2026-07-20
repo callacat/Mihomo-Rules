@@ -40,4 +40,4 @@ payload:
   - DOMAIN,dockerproxy.cool
   - DOMAIN,api.baipiao.eu.org
   - DOMAIN,ai.lfree.org
-  - DOMAIN-SUFFIX,nvidia.com
+
