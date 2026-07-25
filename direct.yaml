@@ -19,3 +19,4 @@ payload:
   - DOMAIN-SUFFIX,pool.ntp.org
   - DOMAIN-SUFFIX,gh-proxy.org
   - DOMAIN-SUFFIX,gh-proxy.com
+  - DOMAIN-SUFFIX,tailscale.com
